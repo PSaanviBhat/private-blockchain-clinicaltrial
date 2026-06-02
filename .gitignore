@@ -30,3 +30,4 @@ data/ledger.sqlite3
 contracts/artifacts/
 contracts/cache/
 contracts/deployment.json
+contracts/node_modules/
