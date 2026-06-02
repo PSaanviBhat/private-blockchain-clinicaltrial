@@ -45,15 +45,37 @@ class Block:
         d["block_hash"] = self.block_hash
         return d
 
+    @classmethod
+    def from_record(cls, record: dict) -> "Block":
+        return cls(
+            index=record["index"],
+            previous_hash=record["previous_hash"],
+            merkle_root=record["merkle_root"],
+            timestamp=record["timestamp"],
+            transactions=record.get("transactions", []),
+            validator_id=record["validator_id"],
+            validator_sig=record["validator_sig"],
+            nonce=record.get("nonce", 0),
+        )
+
 
 # ──────────────────────────────────────────────────────────────
 # Blockchain
 # ──────────────────────────────────────────────────────────────
 
 class Blockchain:
-    def __init__(self):
+    def __init__(self, store=None):
         self.chain: List[Block] = []
+        self.store = store
+        if self.store is not None and self.load_from_store() > 0:
+            return
         self._create_genesis()
+
+    def load_from_store(self) -> int:
+        if self.store is None:
+            return 0
+        self.chain = [Block.from_record(record) for record in self.store.load_blocks()]
+        return len(self.chain)
 
     def _create_genesis(self):
         genesis = Block(
@@ -66,6 +88,8 @@ class Blockchain:
             validator_sig="0" * 64,
         )
         self.chain.append(genesis)
+        if self.store is not None:
+            self.store.save_block(genesis.to_dict())
 
     # ── Append ────────────────────────────────────────────────
 
@@ -90,6 +114,8 @@ class Blockchain:
             validator_sig = validator_sig,
         )
         self.chain.append(block)
+        if self.store is not None:
+            self.store.save_block(block.to_dict())
         return block
 
     # ── Verification ─────────────────────────────────────────

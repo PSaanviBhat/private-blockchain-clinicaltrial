@@ -2,7 +2,7 @@
 FastAPI Backend — Unified API for all 12 steps.
 Endpoints: hashing, IPFS, transactions, blockchain, ML gate, nodes, governance
 """
-import os, sys, json, time, csv, io, asyncio
+import sys, json, time, csv, io, asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from backend.config import settings
 
 # ── Internal modules ──────────────────────────────────────────
 from backend.hashing import (
@@ -24,6 +25,7 @@ from blockchain.chain import Blockchain
 from blockchain.consensus import PoAConsensus
 from blockchain.governance import GovernanceEngine
 from ipfs.ipfs_client import IPFSClient
+from backend.persistence import SQLiteLedgerStore
 
 from contextlib import asynccontextmanager
 
@@ -101,7 +103,7 @@ app = FastAPI(
 
 
 def _get_cors_origins() -> list[str]:
-    raw_origins = os.getenv("CORS_ORIGINS", "*")
+    raw_origins = settings.cors_origins
     origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
     return origins or ["*"]
 
@@ -113,18 +115,22 @@ app.add_middleware(
 )
 
 # ── Singleton services ────────────────────────────────────────
-registry  = NodeRegistry()
-seed_network(registry)
+ledger_store = SQLiteLedgerStore(settings.sqlite_db_path)
 
-blockchain = Blockchain()
+registry  = NodeRegistry(store=ledger_store)
+if registry.stats()["total"] == 0:
+    seed_network(registry)
+
+blockchain = Blockchain(store=ledger_store)
 consensus  = PoAConsensus(registry)
-mempool    = Mempool()
-ipfs       = IPFSClient()
+mempool    = Mempool(store=ledger_store)
+ipfs       = IPFSClient(api_url=settings.ipfs_api_url)
 
 # ── Drug Authority Admin — rejected dataset store ─────────────
 import uuid as _uuid
-_rejected_datasets: List[Dict] = []   # in-memory store of blocked uploads
-governance = GovernanceEngine(registry, baseline_tps=10.0, baseline_accuracy=94.1)
+_rejected_datasets: List[Dict] = ledger_store.load_rejected_datasets()
+_ipfs_link_records: List[Dict] = ledger_store.load_ipfs_links()
+governance = GovernanceEngine(registry, baseline_tps=10.0, baseline_accuracy=94.1, store=ledger_store)
 
 # Lazy-load ML gate (only if models are trained)
 _ml_gate = None
@@ -461,6 +467,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "approval_note":  None,
                 "tx_ids":         [],
             })
+            ledger_store.save_rejected_dataset(_rejected_datasets[-1])
             return JSONResponse(
                 status_code=422,
                 content={
@@ -584,6 +591,7 @@ def approve_rejected_dataset(rejection_id: str, req: AdminApproveRequest):
     ds["approved_at"]  = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     ds["approval_note"] = req.approval_note
     ds["tx_ids"]       = tx_ids
+    ledger_store.save_rejected_dataset(ds)
 
     return {
         "rejection_id":  rejection_id,
@@ -603,6 +611,7 @@ def dismiss_rejected_dataset(rejection_id: str):
     _rejected_datasets = [d for d in _rejected_datasets if d["id"] != rejection_id]
     if len(_rejected_datasets) == before:
         raise HTTPException(404, "Rejected dataset not found")
+    ledger_store.delete_rejected_dataset(rejection_id)
     return {"status": "dismissed", "rejection_id": rejection_id}
 
 
@@ -890,6 +899,8 @@ def ipfs_upload(req: IPFSUploadRequest):
     result = ipfs.upload_dict(req.record)
     link   = ipfs.build_link_record(req.trial_id, result["cid"],
                                     result["sha256"], req.node_id)
+    _ipfs_link_records.append({"record": req.record, **link})
+    ledger_store.save_ipfs_link({"record": req.record, **link})
     return {"ipfs": result, "on_chain_link": link}
 
 @app.get("/api/ipfs/status", tags=["IPFS"])
@@ -954,6 +965,9 @@ def metrics():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=reload_enabled)
+    uvicorn.run(
+        "backend.main:app",
+        host=settings.backend_host,
+        port=settings.backend_port,
+        reload=settings.uvicorn_reload,
+    )

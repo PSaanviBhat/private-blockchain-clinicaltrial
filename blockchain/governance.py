@@ -60,7 +60,7 @@ class GovernanceEngine:
     ML_DRIFT_THRESHOLD      = 5.0     # accuracy % points
 
     def __init__(self, registry: NodeRegistry, baseline_tps: float = 10.0,
-                 baseline_accuracy: float = 94.1):
+                 baseline_accuracy: float = 94.1, store=None):
         self.registry           = registry
         self.baseline_tps       = baseline_tps
         self.baseline_accuracy  = baseline_accuracy
@@ -68,6 +68,32 @@ class GovernanceEngine:
         self.actions:    List[GovernanceAction] = []
         self.consensus_threshold: float = 0.67   # default supermajority
         self.retrain_flag: bool = False
+        self.store = store
+        if self.store is not None:
+            self.load_from_store()
+
+    def load_from_store(self) -> None:
+        if self.store is None:
+            return
+        self.snapshots = []
+        for record in self.store.load_governance_snapshots():
+            self.snapshots.append(NetworkSnapshot(
+                timestamp=record["timestamp"],
+                pending_tx_count=record["pending_tx_count"],
+                avg_approval_ms=record["avg_approval_ms"],
+                tps=record["tps"],
+                model_accuracy=record["model_accuracy"],
+                node_stats=record.get("node_stats", {}),
+            ))
+        self.actions = []
+        for record in self.store.load_governance_actions():
+            self.actions.append(GovernanceAction(
+                action_type=record["action_type"],
+                target_node=record.get("target_node"),
+                delta=record["delta"],
+                reason=record["reason"],
+                timestamp=record["timestamp"],
+            ))
 
     # ── Record snapshot ──────────────────────────────────────
 
@@ -88,8 +114,15 @@ class GovernanceEngine:
             node_stats       = node_stats,
         )
         self.snapshots.append(snap)
+        if self.store is not None:
+            from dataclasses import asdict
+            self.store.save_governance_snapshot(asdict(snap))
         actions = self._evaluate(snap)
         self.actions.extend(actions)
+        if self.store is not None:
+            from dataclasses import asdict
+            for action in actions:
+                self.store.save_governance_action(asdict(action))
         return actions
 
     # ── Evaluation rules ─────────────────────────────────────

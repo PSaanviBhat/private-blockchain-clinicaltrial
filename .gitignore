@@ -22,3 +22,6 @@ logs/
 # Frontend (if not ignored by its own .gitignore)
 frontend-app/node_modules/
 frontend-app/build/
+
+# Backend persistence artifacts
+data/ledger.sqlite3

@@ -69,11 +69,41 @@ class Transaction:
 # ─────────────────────────────────────────────
 
 class Mempool:
-    def __init__(self, max_size: int = 500):
+    def __init__(self, max_size: int = 500, store=None):
         self.pending: List[Transaction] = []
         self.confirmed: List[Transaction] = []
         self.rejected: List[Transaction] = []
         self.max_size = max_size
+        self.store = store
+        if self.store is not None:
+            self.load_from_store()
+
+    def load_from_store(self) -> None:
+        if self.store is None:
+            return
+        self.pending = []
+        self.confirmed = []
+        self.rejected = []
+        for record in self.store.load_transactions():
+            tx = Transaction(
+                trial_id=record["trial_id"],
+                node_id=record["node_id"],
+                data_hash=record["data_hash"],
+                ipfs_cid=record.get("ipfs_cid", ""),
+                metadata=record.get("metadata", {}),
+                tx_id=record["tx_id"],
+                timestamp=record["timestamp"],
+                signature=record.get("signature"),
+                status=record.get("status", "PENDING"),
+                ml_result=record.get("ml_result"),
+                ml_confidence=record.get("ml_confidence"),
+            )
+            if tx.status == "CONFIRMED":
+                self.confirmed.append(tx)
+            elif tx.status == "REJECTED":
+                self.rejected.append(tx)
+            else:
+                self.pending.append(tx)
 
     def submit(self, tx: Transaction) -> Dict:
         """Add a transaction to the mempool after format validation."""
@@ -84,9 +114,13 @@ class Mempool:
         if not valid:
             tx.status = "REJECTED"
             self.rejected.append(tx)
+            if self.store is not None:
+                self.store.save_transaction(tx.to_dict())
             return {"accepted": False, "reason": reason, "tx_id": tx.tx_id}
 
         self.pending.append(tx)
+        if self.store is not None:
+            self.store.save_transaction(tx.to_dict())
         return {"accepted": True, "tx_id": tx.tx_id, "status": "PENDING"}
 
     def get_pending(self) -> List[Dict]:
@@ -98,6 +132,8 @@ class Mempool:
                 tx.status = "CONFIRMED"
                 self.confirmed.append(tx)
                 self.pending.remove(tx)
+                if self.store is not None:
+                    self.store.update_transaction_status(tx_id, tx.status)
                 return True
         return False
 
@@ -107,6 +143,8 @@ class Mempool:
                 tx.status = "REJECTED"
                 self.rejected.append(tx)
                 self.pending.remove(tx)
+                if self.store is not None:
+                    self.store.update_transaction_status(tx_id, tx.status)
                 return True
         return False
 

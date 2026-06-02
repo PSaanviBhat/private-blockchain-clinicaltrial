@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getChain, getMetrics, getNodes, getTxStats, mlSummary, govHealth } from '../api';
+import { API_BASE_URL, getChain, getMetrics, getNodes, getTxStats, mlSummary, govHealth } from '../api';
 import { 
   Blocks, ClipboardList, CheckCircle, XCircle, Server, Zap, 
   AlertTriangle, BrainCircuit, Activity, CheckCircle2 
@@ -79,7 +79,7 @@ export default function Dashboard() {
 
       {apiOk === false && (
         <div className="alert alert-error">
-          <AlertTriangle size={18} /> Cannot reach backend API at localhost:8000. Start the FastAPI server first.
+          <AlertTriangle size={18} /> Cannot reach backend API at {API_BASE_URL || 'the configured API URL'}. Start the FastAPI server first.
         </div>
       )}
 

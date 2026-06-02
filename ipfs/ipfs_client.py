@@ -34,14 +34,14 @@ class IPFSClient:
 
     def _try_connect(self):
         if not IPFS_AVAILABLE:
-            print("⚠️  ipfshttpclient not installed — using local mock store")
+            print("IPFS: ipfshttpclient not installed; using local mock store")
             return
         try:
             self._client = ipfshttpclient.connect(self.api_url)
             self._connected = True
-            print(f"✅ Connected to IPFS daemon at {self.api_url}")
+            print(f"IPFS: connected to daemon at {self.api_url}")
         except Exception as e:
-            print(f"⚠️  IPFS daemon unavailable ({e}) — using local mock store")
+            print(f"IPFS: daemon unavailable ({e}); using local mock store")
 
     # ── Upload ────────────────────────────────────────────────
 

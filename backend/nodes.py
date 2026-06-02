@@ -96,20 +96,49 @@ class Node:
         del d["private_key"]   # Never expose private key in serialised form
         return d
 
+    @classmethod
+    def from_record(cls, record: Dict) -> "Node":
+        return cls(
+            node_id=record["node_id"],
+            role=NodeRole(record["role"]),
+            organization=record["organization"],
+            reputation_score=float(record.get("reputation_score", 100.0)),
+            accuracy_score=float(record.get("accuracy_score", 100.0)),
+            private_key=record["private_key"],
+            active=bool(record.get("active", True)),
+            validated_count=int(record.get("validated_count", 0)),
+            rejected_count=int(record.get("rejected_count", 0)),
+            created_at=record.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+
 
 # ─────────────────────────────────────────────
 # Node Registry (in-memory)
 # ─────────────────────────────────────────────
 
 class NodeRegistry:
-    def __init__(self):
+    def __init__(self, store=None):
         self._nodes: Dict[str, Node] = {}
+        self.store = store
+        if self.store is not None:
+            self.load_from_store()
 
     def register(self, node: Node) -> Dict:
         if node.node_id in self._nodes:
             return {"success": False, "reason": f"Node {node.node_id} already registered"}
         self._nodes[node.node_id] = node
+        if self.store is not None:
+            self.store.save_node(node.__dict__)
         return {"success": True, "node_id": node.node_id, "role": node.role}
+
+    def load_from_store(self) -> int:
+        if self.store is None:
+            return 0
+        self._nodes = {}
+        for record in self.store.load_nodes():
+            node = Node.from_record(record)
+            self._nodes[node.node_id] = node
+        return len(self._nodes)
 
     def get(self, node_id: str) -> Optional[Node]:
         return self._nodes.get(node_id)
@@ -128,6 +157,8 @@ class NodeRegistry:
         node = self.get(node_id)
         if node:
             node.active = False
+            if self.store is not None:
+                self.store.save_node(node.__dict__)
             return True
         return False
 
@@ -135,6 +166,8 @@ class NodeRegistry:
         node = self.get(node_id)
         if node:
             node.update_reputation(delta)
+            if self.store is not None:
+                self.store.save_node(node.__dict__)
             return node.reputation_score
         return None
 
