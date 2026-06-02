@@ -8,6 +8,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 
 class SQLiteLedgerStore:
     def __init__(self, db_path: str):
@@ -44,6 +47,8 @@ class SQLiteLedgerStore:
                     reputation_score REAL NOT NULL,
                     accuracy_score REAL NOT NULL,
                     private_key TEXT NOT NULL,
+                    public_key TEXT NOT NULL DEFAULT '',
+                    key_scheme TEXT NOT NULL DEFAULT 'ed25519-demo',
                     active INTEGER NOT NULL,
                     validated_count INTEGER NOT NULL,
                     rejected_count INTEGER NOT NULL,
@@ -112,9 +117,39 @@ class SQLiteLedgerStore:
                 );
                 """
             )
+            self._ensure_column(conn, "nodes", "public_key", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "nodes", "key_scheme", "TEXT NOT NULL DEFAULT 'ed25519-demo'")
+            self._backfill_node_keys(conn)
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _derive_public_key(private_key_hex: str) -> str:
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+        return private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        ).hex()
+
+    @staticmethod
+    def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return any(row[1] == column_name for row in rows)
+
+    def _ensure_column(self, conn: sqlite3.Connection, table_name: str, column_name: str, column_def: str) -> None:
+        if not self._has_column(conn, table_name, column_name):
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+
+    def _backfill_node_keys(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("SELECT node_id, private_key, public_key, key_scheme FROM nodes").fetchall()
+        for row in rows:
+            public_key = row["public_key"] or self._derive_public_key(row["private_key"])
+            key_scheme = row["key_scheme"] or "ed25519-demo"
+            conn.execute(
+                "UPDATE nodes SET public_key = ?, key_scheme = ? WHERE node_id = ?",
+                (public_key, key_scheme, row["node_id"]),
+            )
 
     @staticmethod
     def _dump(value: Any) -> str:
@@ -184,18 +219,22 @@ class SQLiteLedgerStore:
 
     def save_node(self, node: Dict) -> None:
         role = getattr(node.get("role"), "value", node.get("role"))
+        public_key = node.get("public_key") or self._derive_public_key(node["private_key"])
         self._execute(
             """
             INSERT INTO nodes (
                 node_id, role, organization, reputation_score, accuracy_score,
-                private_key, active, validated_count, rejected_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                private_key, public_key, key_scheme, active, validated_count,
+                rejected_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(node_id) DO UPDATE SET
                 role=excluded.role,
                 organization=excluded.organization,
                 reputation_score=excluded.reputation_score,
                 accuracy_score=excluded.accuracy_score,
                 private_key=excluded.private_key,
+                public_key=excluded.public_key,
+                key_scheme=excluded.key_scheme,
                 active=excluded.active,
                 validated_count=excluded.validated_count,
                 rejected_count=excluded.rejected_count,
@@ -208,6 +247,8 @@ class SQLiteLedgerStore:
                 node["reputation_score"],
                 node["accuracy_score"],
                 node["private_key"],
+                public_key,
+                node.get("key_scheme", "ed25519-demo"),
                 int(bool(node["active"])),
                 node["validated_count"],
                 node["rejected_count"],

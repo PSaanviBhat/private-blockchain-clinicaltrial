@@ -26,6 +26,7 @@ from blockchain.chain import Blockchain
 from blockchain.consensus import PoAConsensus
 from blockchain.governance import GovernanceEngine
 from blockchain.governance import GovernanceAction
+from backend.security import build_signed_message, verify_signature
 from ipfs.ipfs_client import IPFSClient
 from backend.persistence import SQLiteLedgerStore
 from backend.contract_client import ContractMirrorService
@@ -155,6 +156,56 @@ def get_ml_gate():
     return _ml_gate, None
 
 
+def _signed_payload(model: BaseModel, exclude: set[str]) -> Dict[str, Any]:
+    data = model.dict()
+    for key in exclude:
+        data.pop(key, None)
+    return data
+
+
+def _verify_actor_signature(
+    action: str,
+    actor_id: str,
+    payload: Dict[str, Any],
+    timestamp: str,
+    nonce: str,
+    signature: str,
+    allowed_roles: List[NodeRole],
+) -> Node:
+    node = registry.get(actor_id)
+    if node is None:
+        raise HTTPException(404, f"Node not found: {actor_id}")
+    if not node.active:
+        raise HTTPException(403, f"Node {actor_id} is inactive")
+    if allowed_roles and node.role not in allowed_roles:
+        raise HTTPException(403, f"Node role {node.role.value} cannot perform {action}")
+
+    message = build_signed_message(action, actor_id, timestamp, nonce, payload)
+    if not verify_signature(node.public_key, message, signature):
+        raise HTTPException(401, "Invalid request signature")
+    return node
+
+
+def _require_signed_node_action(
+    action: str,
+    actor_field: str,
+    model: BaseModel,
+    allowed_roles: List[NodeRole],
+) -> Node:
+    data = model.dict()
+    actor_id = str(data.get(actor_field, "")).strip()
+    if not actor_id:
+        raise HTTPException(400, f"{actor_field} is required")
+    timestamp = str(data.get("timestamp", "")).strip()
+    nonce = str(data.get("nonce", "")).strip()
+    signature = str(data.get("signature", "")).strip()
+    if not timestamp or not nonce or not signature:
+        raise HTTPException(400, "timestamp, nonce, and signature are required")
+
+    payload = _signed_payload(model, {actor_field, "timestamp", "nonce", "signature"})
+    return _verify_actor_signature(action, actor_id, payload, timestamp, nonce, signature, allowed_roles)
+
+
 # ═════════════════════════════════════════════════════════════
 # Pydantic models
 # ═════════════════════════════════════════════════════════════
@@ -191,18 +242,48 @@ class TransactionRequest(BaseModel):
     data_hash: str
     ipfs_cid: str = ""
     metadata: Dict = {}
+    timestamp: str
+    nonce: str
+    signature: str
     private_key_hex: Optional[str] = None
 
 class VoteRequest(BaseModel):
     voter_id: str
     block_hash: str
     approve: bool
+    timestamp: str
+    nonce: str
+    signature: str
 
 class NodeRegisterRequest(BaseModel):
+    admin_node_id: str
     node_id: str
     role: str
     organization: str
-    private_key_hex: Optional[str] = None
+    node_private_key_hex: Optional[str] = None
+    node_public_key_hex: Optional[str] = None
+    timestamp: str
+    nonce: str
+    signature: str
+
+
+class AdminApproveRequest(BaseModel):
+    approved_by:   str           # admin username / node ID
+    approval_note: str = ""      # optional justification
+    push_to_chain: bool = True   # if True, submit each row as a tx to the mempool
+    timestamp: str
+    nonce: str
+    signature: str
+
+
+class ConsentVerifyRequest(BaseModel):
+    verifier_id: str
+    trial_id: str
+    consent_hash: str
+    verified: bool = True
+    timestamp: str
+    nonce: str
+    signature: str
 
 class GovernanceSnapshot(BaseModel):
     pending_tx: int
@@ -509,11 +590,6 @@ async def upload_dataset(file: UploadFile = File(...)):
 # Drug Authority Admin — rejected dataset review queue
 # ═════════════════════════════════════════════════════════════
 
-class AdminApproveRequest(BaseModel):
-    approved_by:   str           # admin username / node ID
-    approval_note: str = ""      # optional justification
-    push_to_chain: bool = True   # if True, submit each row as a tx to the mempool
-
 
 @app.get("/api/admin/rejected-datasets", tags=["Admin"])
 def list_rejected_datasets():
@@ -559,6 +635,20 @@ def approve_rejected_dataset(rejection_id: str, req: AdminApproveRequest):
         raise HTTPException(404, "Rejected dataset not found")
     if ds["status"] == "APPROVED":
         raise HTTPException(409, "Dataset has already been approved")
+
+    _verify_actor_signature(
+        "approve_rejected_dataset",
+        req.approved_by,
+        {
+            "rejection_id": rejection_id,
+            "approval_note": req.approval_note,
+            "push_to_chain": req.push_to_chain,
+        },
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.ADMIN],
+    )
 
     tx_ids = []
     errors = []
@@ -616,8 +706,17 @@ def approve_rejected_dataset(rejection_id: str, req: AdminApproveRequest):
 
 
 @app.delete("/api/admin/rejected-datasets/{rejection_id}", tags=["Admin"])
-def dismiss_rejected_dataset(rejection_id: str):
+def dismiss_rejected_dataset(rejection_id: str, admin_node_id: str, timestamp: str, nonce: str, signature: str):
     """Dismiss / delete a rejected dataset from the review queue."""
+    _verify_actor_signature(
+        "dismiss_rejected_dataset",
+        admin_node_id,
+        {"rejection_id": rejection_id},
+        timestamp,
+        nonce,
+        signature,
+        [NodeRole.ADMIN],
+    )
     global _rejected_datasets
     before = len(_rejected_datasets)
     _rejected_datasets = [d for d in _rejected_datasets if d["id"] != rejection_id]
@@ -663,6 +762,21 @@ def submit_transaction(req: TransactionRequest, background_tasks: BackgroundTask
     """
     ml_gate_result = None
     ml_warning     = None
+
+    _verify_actor_signature(
+        "submit_transaction",
+        req.node_id,
+        {
+            "trial_id": req.trial_id,
+            "data_hash": req.data_hash,
+            "ipfs_cid": req.ipfs_cid,
+            "metadata": req.metadata,
+        },
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.PROTOCOL_VALIDATOR, NodeRole.CONSENT_VERIFIER],
+    )
 
     # ── ML Pre-chain Gate ────────────────────────────────────
     gate, err = get_ml_gate()
@@ -766,13 +880,36 @@ def list_nodes(role: Optional[str] = None):
 
 @app.post("/api/nodes/register", tags=["Nodes"])
 def register_node(req: NodeRegisterRequest, background_tasks: BackgroundTasks):
+    _verify_actor_signature(
+        "register_node",
+        req.admin_node_id,
+        {
+            "node_id": req.node_id,
+            "role": req.role,
+            "organization": req.organization,
+            "node_private_key_hex": req.node_private_key_hex,
+            "node_public_key_hex": req.node_public_key_hex,
+        },
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.ADMIN],
+    )
     try:
         role = NodeRole[req.role]
     except KeyError:
         raise HTTPException(400, f"Unknown role: {req.role}")
-    node = Node(req.node_id, role, req.organization)
-    if req.private_key_hex:
-        node.private_key = req.private_key_hex
+    if req.node_public_key_hex and not req.node_private_key_hex:
+        raise HTTPException(400, "node_private_key_hex is required when node_public_key_hex is provided")
+    node = Node(
+        req.node_id,
+        role,
+        req.organization,
+        private_key=req.node_private_key_hex or secrets.token_hex(32),
+        public_key=req.node_public_key_hex or "",
+    )
+    if req.node_public_key_hex and node.public_key.lower() != req.node_public_key_hex.lower():
+        raise HTTPException(400, "node_public_key_hex does not match node_private_key_hex")
     result = registry.register(node)
     if result.get("success"):
         background_tasks.add_task(contract_bridge.mirror_register_node, node)
@@ -786,7 +923,16 @@ def get_node(node_id: str):
     return node.to_dict()
 
 @app.put("/api/nodes/{node_id}/reputation", tags=["Nodes"])
-def update_rep(node_id: str, delta: float):
+def update_rep(node_id: str, delta: float, admin_node_id: str, timestamp: str, nonce: str, signature: str):
+    _verify_actor_signature(
+        "update_reputation",
+        admin_node_id,
+        {"node_id": node_id, "delta": delta},
+        timestamp,
+        nonce,
+        signature,
+        [NodeRole.ADMIN],
+    )
     new_rep = registry.update_reputation(node_id, delta)
     if new_rep is None:
         raise HTTPException(404, "Node not found")
@@ -836,9 +982,21 @@ def ml_summary():
 class ProposeRequest(BaseModel):
     proposer_id: str
     block_data: Dict
+    timestamp: str
+    nonce: str
+    signature: str
 
 @app.post("/api/consensus/propose", tags=["Consensus"])
 def propose_block(req: ProposeRequest):
+    _verify_actor_signature(
+        "propose_block",
+        req.proposer_id,
+        {"block_data": req.block_data},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.PROTOCOL_VALIDATOR, NodeRole.CONSENT_VERIFIER],
+    )
     try:
         bh = consensus.propose_block(req.proposer_id, req.block_data)
         return {"block_hash": bh, "status": "OPEN"}
@@ -847,6 +1005,15 @@ def propose_block(req: ProposeRequest):
 
 @app.post("/api/consensus/vote", tags=["Consensus"])
 def cast_vote(req: VoteRequest):
+    _verify_actor_signature(
+        "cast_vote",
+        req.voter_id,
+        {"block_hash": req.block_hash, "approve": req.approve},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.PROTOCOL_VALIDATOR, NodeRole.CONSENT_VERIFIER],
+    )
     return consensus.cast_vote(req.voter_id, req.block_hash, req.approve)
 
 @app.post("/api/consensus/finalize/{block_hash}", tags=["Consensus"])
@@ -868,10 +1035,22 @@ def get_round(block_hash: str):
 class AppendBlockRequest(BaseModel):
     validator_id: str
     validator_sig: str = ""
+    timestamp: str
+    nonce: str
+    signature: str
 
 @app.post("/api/blockchain/mine", tags=["Blockchain"])
 def mine_block(req: AppendBlockRequest, background_tasks: BackgroundTasks):
     """Drain pending transactions, create and append a new block."""
+    _verify_actor_signature(
+        "mine_block",
+        req.validator_id,
+        {"validator_sig": req.validator_sig},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.PROTOCOL_VALIDATOR],
+    )
     batch = mempool.drain_batch(size=10)
     if not batch:
         raise HTTPException(400, "No pending transactions to mine")
@@ -911,9 +1090,21 @@ class IPFSUploadRequest(BaseModel):
     trial_id: str
     node_id: str
     record: Dict
+    timestamp: str
+    nonce: str
+    signature: str
 
 @app.post("/api/ipfs/upload", tags=["IPFS"])
 def ipfs_upload(req: IPFSUploadRequest):
+    _verify_actor_signature(
+        "ipfs_upload",
+        req.node_id,
+        {"trial_id": req.trial_id, "record": req.record},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.PROTOCOL_VALIDATOR, NodeRole.CONSENT_VERIFIER],
+    )
     result = ipfs.upload_dict(req.record)
     link   = ipfs.build_link_record(req.trial_id, result["cid"],
                                     result["original_sha256"], req.node_id)
@@ -951,10 +1142,22 @@ class AuditTrialRequest(BaseModel):
     trial_id: str
     action: str
     auditor_id: str
+    timestamp: str
+    nonce: str
+    signature: str
 
 
 @app.post("/api/governance/audit-trial", tags=["Governance"])
 def audit_trial(req: AuditTrialRequest, background_tasks: BackgroundTasks):
+    _verify_actor_signature(
+        "audit_trial",
+        req.auditor_id,
+        {"trial_id": req.trial_id, "action": req.action},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.COMPLIANCE_AUDITOR],
+    )
     audit = GovernanceAction(
         action_type="AUDIT",
         target_node=req.auditor_id,
@@ -965,6 +1168,42 @@ def audit_trial(req: AuditTrialRequest, background_tasks: BackgroundTasks):
     ledger_store.save_governance_action(asdict(audit))
     background_tasks.add_task(contract_bridge.mirror_audit_trial, req.trial_id, req.action, req.auditor_id)
     return {"status": "recorded", "action": asdict(audit)}
+
+
+@app.post("/api/governance/verify-consent", tags=["Governance"])
+def verify_consent(req: ConsentVerifyRequest):
+    _verify_actor_signature(
+        "verify_consent",
+        req.verifier_id,
+        {"trial_id": req.trial_id, "consent_hash": req.consent_hash, "verified": req.verified},
+        req.timestamp,
+        req.nonce,
+        req.signature,
+        [NodeRole.CONSENT_VERIFIER],
+    )
+    action = GovernanceAction(
+        action_type="CONSENT_VERIFY",
+        target_node=req.verifier_id,
+        delta=0,
+        reason=f"{req.trial_id}: consent {'verified' if req.verified else 'rejected'}",
+    )
+    governance.actions.append(action)
+    ledger_store.save_governance_action(asdict(action))
+    return {"status": "recorded", "action": asdict(action), "verified": req.verified}
+
+
+@app.get("/api/demo/node-keys/{node_id}", tags=["Demo"])
+def demo_node_keys(node_id: str):
+    node = registry.get(node_id)
+    if not node:
+        raise HTTPException(404, "Node not found")
+    return {
+        "node_id": node.node_id,
+        "public_key_hex": node.public_key,
+        "private_key_hex": node.private_key,
+        "key_scheme": node.key_scheme,
+        "demo_only": True,
+    }
 
 @app.get("/api/governance/health", tags=["Governance"])
 def governance_health():

@@ -1,16 +1,18 @@
 """
 Step 4: Role-Based Node Participation
-- Three node roles: Protocol Validator, Consent Verifier, Compliance Auditor
-- Each node has a reputation score and private key
-- RBAC enforcement
+- Node roles are stored locally for the demo and signed requests are verified
+    against the registered public key.
 """
-import hashlib
-import json
 import secrets
 import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Dict, List, Optional
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from backend.security import DEMO_KEY_SCHEME, build_signed_message, verify_signature
 
 
 # ─────────────────────────────────────────────
@@ -18,22 +20,37 @@ from typing import Dict, List, Optional
 # ─────────────────────────────────────────────
 
 class NodeRole(str, Enum):
+    ADMIN               = "ADMIN"                # Local demo admin for node registration
     PROTOCOL_VALIDATOR  = "PROTOCOL_VALIDATOR"   # Validates trial methodology
     CONSENT_VERIFIER    = "CONSENT_VERIFIER"     # Verifies patient consent / ZKPs
     COMPLIANCE_AUDITOR  = "COMPLIANCE_AUDITOR"   # Read-only: HIPAA/GDPR/GCP check
 
 
 ROLE_PERMISSIONS: Dict[NodeRole, List[str]] = {
+    NodeRole.ADMIN: [
+        "register_node",
+        "deactivate_node",
+        "update_reputation",
+        "read_transaction",
+        "read_block",
+        "read_audit_log",
+    ],
     NodeRole.PROTOCOL_VALIDATOR: [
         "read_transaction",
+        "submit_transaction",
         "validate_transaction",
+        "mine_block",
+        "append_block",
         "sign_block",
         "vote_consensus",
     ],
     NodeRole.CONSENT_VERIFIER: [
         "read_transaction",
+        "submit_transaction",
         "verify_consent",
         "validate_transaction",
+        "mine_block",
+        "append_block",
         "sign_block",
         "vote_consensus",
     ],
@@ -41,6 +58,7 @@ ROLE_PERMISSIONS: Dict[NodeRole, List[str]] = {
         "read_transaction",
         "read_block",
         "read_audit_log",
+        "audit_trial",
     ],
 }
 
@@ -57,24 +75,40 @@ class Node:
     reputation_score: float = 100.0       # 0–100
     accuracy_score:   float = 100.0       # ML classification accuracy %
     private_key:      str   = field(default_factory=lambda: secrets.token_hex(32))
+    public_key:       str   = ""
+    key_scheme:       str   = DEMO_KEY_SCHEME
     active:           bool  = True
     validated_count:  int   = 0
     rejected_count:   int   = 0
     created_at:       str   = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
-    @property
-    def public_key(self) -> str:
-        """Derive a deterministic public key from the private key (simplified)."""
-        return hashlib.sha256(self.private_key.encode()).hexdigest()
+    def __post_init__(self) -> None:
+        if not self.public_key:
+            self.public_key = self._derive_public_key(self.private_key)
+
+    @staticmethod
+    def _derive_public_key(private_key_hex: str) -> str:
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+        return private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        ).hex()
 
     def has_permission(self, action: str) -> bool:
         return action in ROLE_PERMISSIONS.get(self.role, [])
 
     def sign(self, data: str) -> str:
-        """HMAC-SHA256 signature using node private key."""
-        import hmac
-        key = bytes.fromhex(self.private_key)
-        return hmac.new(key, data.encode(), hashlib.sha256).hexdigest()
+        """Ed25519 signature using the node private key seed."""
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self.private_key))
+        return private_key.sign(data.encode("utf-8")).hex()
+
+    def sign_request(self, action: str, payload: Dict[str, object], timestamp: str, nonce: str) -> str:
+        message = build_signed_message(action, self.node_id, timestamp, nonce, payload)
+        return self.sign(message)
+
+    def verify_request(self, action: str, payload: Dict[str, object], timestamp: str, nonce: str, signature: str) -> bool:
+        message = build_signed_message(action, self.node_id, timestamp, nonce, payload)
+        return verify_signature(self.public_key, message, signature)
 
     def update_reputation(self, delta: float) -> None:
         self.reputation_score = max(0.0, min(100.0, self.reputation_score + delta))
@@ -93,6 +127,7 @@ class Node:
         d["public_key"]        = self.public_key
         d["consensus_weight"]  = self.consensus_weight()
         d["permissions"]       = ROLE_PERMISSIONS[self.role]
+        d["demo_only"]         = True
         del d["private_key"]   # Never expose private key in serialised form
         return d
 
@@ -105,6 +140,8 @@ class Node:
             reputation_score=float(record.get("reputation_score", 100.0)),
             accuracy_score=float(record.get("accuracy_score", 100.0)),
             private_key=record["private_key"],
+            public_key=record.get("public_key", ""),
+            key_scheme=record.get("key_scheme", DEMO_KEY_SCHEME),
             active=bool(record.get("active", True)),
             validated_count=int(record.get("validated_count", 0)),
             rejected_count=int(record.get("rejected_count", 0)),
@@ -138,6 +175,8 @@ class NodeRegistry:
         for record in self.store.load_nodes():
             node = Node.from_record(record)
             self._nodes[node.node_id] = node
+            if not record.get("public_key") or not record.get("key_scheme"):
+                self.store.save_node(node.__dict__)
         return len(self._nodes)
 
     def get(self, node_id: str) -> Optional[Node]:
@@ -201,6 +240,7 @@ class NodeRegistry:
 def seed_network(registry: NodeRegistry) -> None:
     """Populate a registry with a representative default set of nodes."""
     defaults = [
+        Node("NODE-ADMIN", NodeRole.ADMIN,            "LocalAdmin",     reputation_score=100.0),
         Node("NODE-01", NodeRole.PROTOCOL_VALIDATOR, "PharmaCorp-A",    reputation_score=97.0),
         Node("NODE-02", NodeRole.PROTOCOL_VALIDATOR, "MedResearch-B",   reputation_score=89.0),
         Node("NODE-03", NodeRole.CONSENT_VERIFIER,   "EthicsBoard-C",   reputation_score=95.0),

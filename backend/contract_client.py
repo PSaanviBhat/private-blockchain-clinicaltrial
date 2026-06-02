@@ -135,6 +135,8 @@ class ContractMirrorService:
             if node is None:
                 continue
             result = self.mirror_register_node(node)
+            if result.get("skipped"):
+                continue
             if result.get("ok"):
                 mirrored += 1
             else:
@@ -151,6 +153,8 @@ class ContractMirrorService:
 
         role = self._node_value(node, "role")
         role_name = getattr(role, "value", role)
+        if str(role_name) == "ADMIN":
+            return {"ok": False, "skipped": True, "reason": "admin role is local-only"}
         role_id = self.ROLE_MAP.get(str(role_name))
         if role_id is None:
             return {"ok": False, "reason": f"unsupported role: {role_name}"}
