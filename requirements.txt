@@ -18,8 +18,11 @@ joblib==1.4.2
 # Hashing / crypto
 safe-pysha3
 
-# IPFS (optional — falls back to mock if daemon unavailable)
+# IPFS (mock mode is explicit; real mode requires a reachable daemon)
 ipfshttpclient==0.8.0a2
+
+# AES encryption for IPFS payloads
+cryptography==42.0.8
 
 # Web3 (for Ganache / Ethereum integration)
 web3==6.19.0

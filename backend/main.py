@@ -132,7 +132,7 @@ if registry.stats()["total"] == 0:
 blockchain = Blockchain(store=ledger_store)
 consensus  = PoAConsensus(registry)
 mempool    = Mempool(store=ledger_store)
-ipfs       = IPFSClient(api_url=settings.ipfs_api_url)
+ipfs       = IPFSClient(api_url=settings.ipfs_api_url, mode=settings.ipfs_mode)
 contract_bridge = ContractMirrorService.from_settings(settings)
 contract_bridge.attach_registry(registry)
 
@@ -568,7 +568,7 @@ def approve_rejected_dataset(rejection_id: str, req: AdminApproveRequest):
             try:
                 # Hash the record for on-chain storage
                 record_hash = hash_batch([row])[0]["data_hash"]
-                # Upload to IPFS (mock or real)
+                # Upload encrypted record to IPFS (mock or real mode)
                 ipfs_result = ipfs.upload_dict(row)
                 cid = ipfs_result.get("cid", "")
                 # Submit to mempool — bypass ML gate by calling create_transaction directly
@@ -588,6 +588,8 @@ def approve_rejected_dataset(rejection_id: str, req: AdminApproveRequest):
                         "admin_approved":     True,
                         "approved_by":        req.approved_by,
                         "approval_note":      req.approval_note,
+                        "ipfs_original_sha256": ipfs_result.get("original_sha256"),
+                        "ipfs_encryption_key_b64": ipfs_result.get("encryption_key_b64"),
                     },
                 )
                 mempool.submit(tx)
@@ -914,9 +916,20 @@ class IPFSUploadRequest(BaseModel):
 def ipfs_upload(req: IPFSUploadRequest):
     result = ipfs.upload_dict(req.record)
     link   = ipfs.build_link_record(req.trial_id, result["cid"],
-                                    result["sha256"], req.node_id)
-    _ipfs_link_records.append({"record": req.record, **link})
-    ledger_store.save_ipfs_link({"record": req.record, **link})
+                                    result["original_sha256"], req.node_id)
+    stored = {
+        "record": req.record,
+        "ipfs": result,
+        "encryption": {
+            "encryption_key_b64": result["encryption_key_b64"],
+            "nonce_b64": result["nonce_b64"],
+            "ciphertext_sha256": result["ciphertext_sha256"],
+            "mode": result["mode"],
+        },
+        **link,
+    }
+    _ipfs_link_records.append(stored)
+    ledger_store.save_ipfs_link(stored)
     return {"ipfs": result, "on_chain_link": link}
 
 @app.get("/api/ipfs/status", tags=["IPFS"])

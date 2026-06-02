@@ -33,6 +33,7 @@ class Settings:
         str(Path(__file__).resolve().parent.parent / "data" / "ledger.sqlite3"),
     )
 
+    ipfs_mode: str = _env("IPFS_MODE", "real")
     ipfs_api_url: str = _env("IPFS_API_URL", "/ip4/127.0.0.1/tcp/5001")
     hardhat_rpc_url: str = _env("HARDHAT_RPC_URL", "http://127.0.0.1:8545")
     contract_address: str = _env("CONTRACT_ADDRESS", "")
