@@ -36,6 +36,11 @@ class Settings:
     ipfs_api_url: str = _env("IPFS_API_URL", "/ip4/127.0.0.1/tcp/5001")
     hardhat_rpc_url: str = _env("HARDHAT_RPC_URL", "http://127.0.0.1:8545")
     contract_address: str = _env("CONTRACT_ADDRESS", "")
+    contract_deployment_path: str = _env(
+        "CONTRACT_DEPLOYMENT_PATH",
+        str(Path(__file__).resolve().parent.parent / "contracts" / "deployment.json"),
+    )
+    contract_name: str = _env("CONTRACT_NAME", "ClinicalTrialRegistry")
 
 
 settings = Settings()

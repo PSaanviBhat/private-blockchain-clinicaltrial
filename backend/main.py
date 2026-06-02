@@ -3,6 +3,7 @@ FastAPI Backend — Unified API for all 12 steps.
 Endpoints: hashing, IPFS, transactions, blockchain, ML gate, nodes, governance
 """
 import sys, json, time, csv, io, asyncio
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,14 +25,21 @@ from backend.nodes import NodeRegistry, Node, NodeRole, seed_network
 from blockchain.chain import Blockchain
 from blockchain.consensus import PoAConsensus
 from blockchain.governance import GovernanceEngine
+from blockchain.governance import GovernanceAction
 from ipfs.ipfs_client import IPFSClient
 from backend.persistence import SQLiteLedgerStore
+from backend.contract_client import ContractMirrorService
 
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app):
     """Start governance snapshot loop on startup."""
+    if contract_bridge.enabled:
+        try:
+            contract_bridge.bootstrap_nodes(registry)
+        except Exception:
+            pass
     task = asyncio.create_task(_governance_loop())
     yield
     task.cancel()
@@ -125,6 +133,8 @@ blockchain = Blockchain(store=ledger_store)
 consensus  = PoAConsensus(registry)
 mempool    = Mempool(store=ledger_store)
 ipfs       = IPFSClient(api_url=settings.ipfs_api_url)
+contract_bridge = ContractMirrorService.from_settings(settings)
+contract_bridge.attach_registry(registry)
 
 # ── Drug Authority Admin — rejected dataset store ─────────────
 import uuid as _uuid
@@ -643,7 +653,7 @@ def verify_hash(req: VerifyRequest):
 # ═════════════════════════════════════════════════════════════
 
 @app.post("/api/transactions/submit", tags=["Transactions"])
-def submit_transaction(req: TransactionRequest):
+def submit_transaction(req: TransactionRequest, background_tasks: BackgroundTasks):
     """
     Submit a transaction to the mempool.
     If ML models are trained, runs the XGBoost gate first.
@@ -729,6 +739,8 @@ def submit_transaction(req: TransactionRequest):
         result['ml_warning'] = ml_warning
     if ml_gate_result:
         result['ml_gate'] = ml_gate_result
+    if result.get("accepted"):
+        background_tasks.add_task(contract_bridge.mirror_submit_trial, tx)
     return result
 
 
@@ -751,7 +763,7 @@ def list_nodes(role: Optional[str] = None):
     return {"nodes": registry.list_nodes(nr), "stats": registry.stats()}
 
 @app.post("/api/nodes/register", tags=["Nodes"])
-def register_node(req: NodeRegisterRequest):
+def register_node(req: NodeRegisterRequest, background_tasks: BackgroundTasks):
     try:
         role = NodeRole[req.role]
     except KeyError:
@@ -759,7 +771,10 @@ def register_node(req: NodeRegisterRequest):
     node = Node(req.node_id, role, req.organization)
     if req.private_key_hex:
         node.private_key = req.private_key_hex
-    return registry.register(node)
+    result = registry.register(node)
+    if result.get("success"):
+        background_tasks.add_task(contract_bridge.mirror_register_node, node)
+    return result
 
 @app.get("/api/nodes/{node_id}", tags=["Nodes"])
 def get_node(node_id: str):
@@ -853,7 +868,7 @@ class AppendBlockRequest(BaseModel):
     validator_sig: str = ""
 
 @app.post("/api/blockchain/mine", tags=["Blockchain"])
-def mine_block(req: AppendBlockRequest):
+def mine_block(req: AppendBlockRequest, background_tasks: BackgroundTasks):
     """Drain pending transactions, create and append a new block."""
     batch = mempool.drain_batch(size=10)
     if not batch:
@@ -862,6 +877,7 @@ def mine_block(req: AppendBlockRequest):
     block = blockchain.append_block(txs, req.validator_id, req.validator_sig)
     for tx in batch:
         mempool.confirm(tx.tx_id)
+    background_tasks.add_task(contract_bridge.mirror_append_block, block.to_dict(), req.validator_id)
     return {"block_index": block.index, "block_hash": block.block_hash,
             "tx_count": len(txs)}
 
@@ -915,8 +931,27 @@ def ipfs_status():
 @app.post("/api/governance/snapshot", tags=["Governance"])
 def record_snapshot(snap: GovernanceSnapshot):
     actions = governance.record_snapshot(**snap.dict())
-    from dataclasses import asdict
     return {"actions_taken": [asdict(a) for a in actions]}
+
+
+class AuditTrialRequest(BaseModel):
+    trial_id: str
+    action: str
+    auditor_id: str
+
+
+@app.post("/api/governance/audit-trial", tags=["Governance"])
+def audit_trial(req: AuditTrialRequest, background_tasks: BackgroundTasks):
+    audit = GovernanceAction(
+        action_type="AUDIT",
+        target_node=req.auditor_id,
+        delta=0,
+        reason=f"{req.trial_id}: {req.action}",
+    )
+    governance.actions.append(audit)
+    ledger_store.save_governance_action(asdict(audit))
+    background_tasks.add_task(contract_bridge.mirror_audit_trial, req.trial_id, req.action, req.auditor_id)
+    return {"status": "recorded", "action": asdict(audit)}
 
 @app.get("/api/governance/health", tags=["Governance"])
 def governance_health():

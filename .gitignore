@@ -25,3 +25,8 @@ frontend-app/build/
 
 # Backend persistence artifacts
 data/ledger.sqlite3
+
+# Hardhat build and deployment artifacts
+contracts/artifacts/
+contracts/cache/
+contracts/deployment.json

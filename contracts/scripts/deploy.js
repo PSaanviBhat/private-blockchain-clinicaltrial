@@ -27,7 +27,15 @@ async function main() {
 
   // Save deployment address
   const fs = require("fs");
-  fs.writeFileSync("deployment.json", JSON.stringify({ address: addr, deployer: deployer.address }, null, 2));
+  const deployment = {
+    contract_name: "ClinicalTrialRegistry",
+    address: addr,
+    abi: JSON.parse(Factory.interface.formatJson()),
+    deployer: deployer.address,
+    chain_id: (await hre.ethers.provider.getNetwork()).chainId.toString(),
+    network: hre.network.name,
+  };
+  fs.writeFileSync("deployment.json", JSON.stringify(deployment, null, 2));
   console.log("Deployment saved to deployment.json");
 }
 
