@@ -12,7 +12,7 @@ module.exports = {
     },
   },
   paths: {
-    sources: ".",
+    sources: "./src",
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",
