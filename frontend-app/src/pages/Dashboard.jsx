@@ -173,11 +173,6 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-            {gov.retrain_flag && (
-              <div className="alert alert-warning" style={{ marginTop:20 }}>
-                <AlertTriangle size={18} /> ML model retraining recommended due to accuracy drift
-              </div>
-            )}
           </div>
         )}
 
