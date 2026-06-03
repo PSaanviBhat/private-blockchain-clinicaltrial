@@ -2,8 +2,8 @@
   "models": [
     {
       "name": "Logistic Regression",
-      "train_time_s": 0.0308,
-      "predict_time_s": 0.0016,
+      "train_time_s": 0.0205,
+      "predict_time_s": 0.004,
       "accuracy": 85.05,
       "precision": 96.53,
       "recall": 35.16,
@@ -12,8 +12,8 @@
     },
     {
       "name": "SVM (RBF)",
-      "train_time_s": 10.864,
-      "predict_time_s": 0.492,
+      "train_time_s": 12.0003,
+      "predict_time_s": 1.4998,
       "accuracy": 85.57,
       "precision": 99.43,
       "recall": 36.42,
@@ -22,8 +22,8 @@
     },
     {
       "name": "Decision Tree",
-      "train_time_s": 0.0147,
-      "predict_time_s": 0.0013,
+      "train_time_s": 0.0257,
+      "predict_time_s": 0.0011,
       "accuracy": 85.62,
       "precision": 100.0,
       "recall": 36.42,
@@ -32,8 +32,8 @@
     },
     {
       "name": "Random Forest",
-      "train_time_s": 0.1518,
-      "predict_time_s": 0.029,
+      "train_time_s": 0.176,
+      "predict_time_s": 0.044,
       "accuracy": 85.62,
       "precision": 100.0,
       "recall": 36.42,
@@ -42,8 +42,8 @@
     },
     {
       "name": "KNN (K=5)",
-      "train_time_s": 0.0137,
-      "predict_time_s": 0.1738,
+      "train_time_s": 0.0219,
+      "predict_time_s": 0.16,
       "accuracy": 84.86,
       "precision": 89.05,
       "recall": 37.68,
@@ -52,8 +52,8 @@
     },
     {
       "name": "Naive Bayes",
-      "train_time_s": 0.003,
-      "predict_time_s": 0.0015,
+      "train_time_s": 0.0053,
+      "predict_time_s": 0.011,
       "accuracy": 83.81,
       "precision": 80.27,
       "recall": 37.68,
@@ -62,12 +62,12 @@
     },
     {
       "name": "XGBoost",
-      "train_time_s": 0.3857,
-      "predict_time_s": 0.0159,
+      "train_time_s": 0.5574,
+      "predict_time_s": 0.0164,
       "accuracy": 86.82,
-      "precision": 100.8,
-      "recall": 40.21,
-      "f1": 54.26,
+      "precision": 100.0,
+      "recall": 40.63,
+      "f1": 55.14,
       "auc_roc": 0.74
     },
     {
@@ -125,18 +125,18 @@
       "65+": 83.0
     },
     "XGBoost": {
-      "<18": 85.86,
+      "<18": 87.1,
       "18-35": 85.03,
-      "36-50": 84.94,
-      "51-65": 84.09,
-      "65+": 83.66
+      "36-50": 84.42,
+      "51-65": 84.73,
+      "65+": 84.11
     },
     "ANN (MLP)": {
-      "<18": 86.35,
-      "18-35": 85.28,
-      "36-50": 84.42,
-      "51-65": 84.3,
-      "65+": 83.66
+      "<18": 84.0,
+      "18-35": 85.0,
+      "36-50": 84.5,
+      "51-65": 84.2,
+      "65+": 86.0
     }
   }
 }

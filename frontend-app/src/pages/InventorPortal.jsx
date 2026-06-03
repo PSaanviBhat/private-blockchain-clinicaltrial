@@ -52,7 +52,18 @@ export default function InventorPortal() {
     node_id: 'NODE-01', manipulated: 0
   });
 
-  const err = (msg) => { setError(msg); setLoading(false); };
+  const err = (msg) => { 
+    if (msg && typeof msg === 'object') {
+      try {
+        setError(JSON.stringify(msg));
+      } catch (e) {
+        setError('An error occurred.');
+      }
+    } else {
+      setError(msg || 'An error occurred.');
+    }
+    setLoading(false); 
+  };
 
   // ── Step 1: CSV Upload ──────────────────────────────────
   const onDrop = useCallback(files => setFile(files[0]), []);
