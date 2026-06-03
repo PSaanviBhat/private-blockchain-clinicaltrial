@@ -541,9 +541,9 @@ async def upload_dataset(file: UploadFile = File(...)):
         flagged_rate = screening["flagged_rows"] / max(len(rows), 1)
         screening["flagged_rate_pct"] = round(flagged_rate * 100, 1)
 
-        # Hard-block if >20% of rows are fraudulent (clearly malicious/biased dataset)
-        # Below 20%: pass through with warning (training datasets naturally have ~15-20% fraud labels)
-        BLOCK_THRESHOLD = 0.20
+        # Hard-block if >25% of rows are fraudulent (clearly malicious/biased dataset)
+        # Below 25%: pass through with warning (training datasets naturally have ~15-20% fraud labels)
+        BLOCK_THRESHOLD = 0.25
         if flagged_rate > BLOCK_THRESHOLD:
             # ── Save to Drug Authority review queue ───────────────
             rejection_id = str(_uuid.uuid4())
