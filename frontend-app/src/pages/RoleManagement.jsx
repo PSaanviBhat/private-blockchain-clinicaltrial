@@ -34,6 +34,13 @@ export default function RoleManagement() {
 
   useEffect(() => { load(); }, []);
 
+  const formatError = (detail) => {
+    if (detail && typeof detail === 'object') {
+      try { return JSON.stringify(detail); } catch (e) { return 'An error occurred'; }
+    }
+    return detail || 'An error occurred';
+  };
+
   const handleRegister = async () => {
     try {
       const r = await registerNode(regForm);
@@ -41,7 +48,7 @@ export default function RoleManagement() {
       setRegForm({ node_id:'', role:'PROTOCOL_VALIDATOR', organization:'' });
       setShowReg(false);
       await load();
-    } catch(e) { setRegResult({ error: e.response?.data?.detail||e.message }); }
+    } catch(e) { setRegResult({ error: formatError(e.response?.data?.detail||e.message) }); }
   };
 
   const handleRepUpdate = async () => {
@@ -49,7 +56,7 @@ export default function RoleManagement() {
       const r = await updateRep(repForm.node_id, parseFloat(repForm.delta));
       setRepResult(r.data);
       await load();
-    } catch(e) { setRepResult({ error: e.response?.data?.detail||e.message }); }
+    } catch(e) { setRepResult({ error: formatError(e.response?.data?.detail||e.message) }); }
   };
 
   const filtered = filter==='ALL' ? nodes : nodes.filter(n=>n.role===filter);

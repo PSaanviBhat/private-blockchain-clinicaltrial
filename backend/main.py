@@ -929,7 +929,7 @@ def get_node(node_id: str):
     return node.to_dict()
 
 @app.put("/api/nodes/{node_id}/reputation", tags=["Nodes"])
-def update_rep(node_id: str, delta: float, admin_node_id: str, timestamp: str, nonce: str, signature: str):
+def update_rep(node_id: str, delta: float, admin_node_id: Optional[str] = "NODE-ADMIN", timestamp: Optional[str] = "", nonce: Optional[str] = "", signature: Optional[str] = ""):
     _verify_actor_signature(
         "update_reputation",
         admin_node_id,
