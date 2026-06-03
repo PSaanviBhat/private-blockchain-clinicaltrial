@@ -2,7 +2,7 @@
 FastAPI Backend — Unified API for all 12 steps.
 Endpoints: hashing, IPFS, transactions, blockchain, ML gate, nodes, governance
 """
-import sys, json, time, csv, io, asyncio
+import sys, json, time, csv, io, asyncio, secrets
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional

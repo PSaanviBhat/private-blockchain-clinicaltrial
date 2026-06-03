@@ -170,7 +170,7 @@ def build_ann(dim):
         return None
     from tensorflow.keras.regularizers import l2
     m = Sequential([
-        Dense(48, activation="relu", input_shape=(dim,), kernel_regularizer=l2(0.02)),
+        Dense(48, activation="relu", input_dim=dim, kernel_regularizer=l2(0.02)),
         Dropout(0.5),
         Dense(24, activation="relu", kernel_regularizer=l2(0.02)),
         Dropout(0.4),
