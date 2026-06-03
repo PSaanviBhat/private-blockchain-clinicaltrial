@@ -92,7 +92,6 @@ export default function Dashboard() {
         <Stat icon={<Server size={24} />} label="Active Nodes"      value={nodes.filter(n=>n.active).length} color="purple" />
         <Stat icon={<Zap size={24} />} label="Active Gate Model"
               value={ml ? 'XGBoost' : 'N/A'}
-              delta={(() => { const xgb = ml?.models?.find(m => m.is_gate_model); return xgb ? `F1 ${xgb.f1}% · AUC ${xgb.auc_roc}` : null; })()}
               color="amber" />
       </div>
 
