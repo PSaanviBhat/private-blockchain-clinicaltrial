@@ -226,7 +226,7 @@ class SQLiteLedgerStore:
                 node_id, role, organization, reputation_score, accuracy_score,
                 private_key, public_key, key_scheme, active, validated_count,
                 rejected_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(node_id) DO UPDATE SET
                 role=excluded.role,
                 organization=excluded.organization,
