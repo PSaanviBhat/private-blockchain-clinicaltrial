@@ -52,12 +52,6 @@ export default function AuditLog() {
         <p style={{ marginTop: 8 }}>Compliance audit trail (read-only) · AI Governance actions · System performance (Steps 11–12)</p>
       </div>
 
-      {health?.retrain_flag && (
-        <div className="alert alert-warning" style={{marginBottom:24}}>
-          <AlertTriangle size={18} /> <strong>ML Retraining Flag Active</strong> — AI governance detected accuracy drift. Run <code>python ml/train_models.py</code>
-        </div>
-      )}
-
       {/* Governance health cards */}
       {health && (
         <div className="stats-grid" style={{marginBottom:32}}>
